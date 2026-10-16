@@ -1,4 +1,4 @@
-# React-MySQL-Kafka-Kubernetes-K8s
+# React-MySQL-Kafka-Kubernetes-K8s-App
 Full-stack CRUD application built with React, Node.js/Express, MySQL, Apache Kafka, and Kubernetes.
 
 Before applying the Kubernetes manifests, create the MySQL root-password Secret from a
