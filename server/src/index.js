@@ -5,7 +5,6 @@ const cors = require('cors');
 const { rateLimit } = require('express-rate-limit');
 
 const app = express();
-app.use(express.json());
 app.use(cors());
 app.use('/api', rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -13,6 +12,9 @@ app.use('/api', rateLimit({
   standardHeaders: true,
   legacyHeaders: false
 }));
+  limit: 100
+}));
+app.use(express.json());
 
 const pool = mysql.createPool({
   host: process.env.MYSQL_HOST || 'mysql-service',
