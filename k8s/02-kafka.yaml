@@ -24,6 +24,7 @@ spec:
             - -c
           args:
             - |
+              sed -i 's|^advertised.listeners=.*|advertised.listeners=PLAINTEXT://kafka-service:9092|' /opt/kafka/config/kraft/server.properties
               if [ -f /tmp/kraft-combined-logs/meta.properties ]; then
                 exec /opt/kafka/bin/kafka-server-start.sh /opt/kafka/config/kraft/server.properties
               fi
