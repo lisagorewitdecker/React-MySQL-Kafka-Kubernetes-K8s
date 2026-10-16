@@ -14,7 +14,30 @@ async function run() {
 
     await consumer.run({
         eachMessage: async ({ topic, partition, message }) => {
-            const event = JSON.parse(message.value.toString());
+            let event;
+            try {
+                if (message.value == null) {
+                    throw new Error('Message has no value');
+                }
+                event = JSON.parse(message.value.toString());
+            } catch (error) {
+                console.warn(`[INVALID EVENT] Discarding message from ${topic}[${partition}]: ${error.message}`);
+                return;
+            }
+
+            if (
+                !event ||
+                typeof event !== 'object' ||
+                Array.isArray(event) ||
+                !event.payload ||
+                typeof event.payload !== 'object' ||
+                Array.isArray(event.payload) ||
+                event.payload.id == null
+            ) {
+                console.warn(`[INVALID EVENT] Discarding message from ${topic}[${partition}]: invalid event payload`);
+                return;
+            }
+
             console.log(`[EVENT RECEIVED] Type: ${event.eventType} | ID: ${event.payload.id} | At: ${event.timestamp}`);
             // Perform background work: audit storage, cache busting, analytics
         }
