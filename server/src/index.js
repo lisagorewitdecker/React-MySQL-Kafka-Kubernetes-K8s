@@ -2,10 +2,17 @@ const express = require('express');
 const mysql = require('mysql2/promise');
 const { Kafka } = require('kafkajs');
 const cors = require('cors');
+const { rateLimit } = require('express-rate-limit');
 
 const app = express();
 app.use(express.json());
 app.use(cors());
+app.use('/api', rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 100,
+  standardHeaders: true,
+  legacyHeaders: false
+}));
 
 const pool = mysql.createPool({
   host: process.env.MYSQL_HOST || 'mysql-service',
