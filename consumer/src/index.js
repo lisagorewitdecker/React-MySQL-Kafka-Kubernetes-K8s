@@ -21,4 +21,11 @@ async function run() {
     });
 }
 
-run().catch(console.error);
+run().catch(async (error) => {
+    console.error(error);
+    try {
+        await consumer.disconnect();
+    } finally {
+        process.exit(1);
+    }
+});
