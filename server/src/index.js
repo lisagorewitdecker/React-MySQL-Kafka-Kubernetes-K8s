@@ -12,9 +12,12 @@ app.use('/api', rateLimit({
   standardHeaders: true,
   legacyHeaders: false
 }));
-  limit: 100
-}));
 app.use(express.json());
+
+let shuttingDown = false;
+let server;
+let outboxInterval;
+let outboxTask;
 
 const pool = mysql.createPool({
   host: process.env.MYSQL_HOST || 'mysql-service',
@@ -26,7 +29,7 @@ const pool = mysql.createPool({
 });
 
 async function initDB(retries = 10, delay = 5000) {
-  while (retries > 0) {
+  while (retries > 0 && !shuttingDown) {
     try {
       await pool.query(
         'CREATE TABLE IF NOT EXISTS items (' +
@@ -44,12 +47,12 @@ async function initDB(retries = 10, delay = 5000) {
       console.log('MySQL connected and table initialized.');
       return;
     } catch (err) {
-      console.error('Database not ready, retrying in 5 seconds...');
+      console.error('Database not ready, retrying in 5 seconds...', err);
       retries--;
       await new Promise((res) => setTimeout(res, delay));
     }
   }
-  process.exit(1);
+  if (!shuttingDown) throw new Error('Database initialization retries exhausted');
 }
 
 const kafka = new Kafka({
@@ -81,12 +84,12 @@ async function withOutboxEvent(eventType, operation) {
 
 let processingOutbox = false;
 async function processOutbox() {
-  if (processingOutbox) return;
+  if (processingOutbox || shuttingDown) return;
   processingOutbox = true;
   let connection;
   try {
     connection = await pool.getConnection();
-    while (true) {
+    for (let processed = 0; processed < 100 && !shuttingDown; processed++) {
       await connection.beginTransaction();
       try {
         const [rows] = await connection.query(
@@ -112,21 +115,32 @@ async function processOutbox() {
         await connection.query('DELETE FROM outbox WHERE id = ?', [event.id]);
         await connection.commit();
       } catch (error) {
-        await connection.rollback();
+        try {
+          await connection.rollback();
+        } catch (rollbackError) {
+          console.error('Outbox rollback failed:', rollbackError);
+        }
         throw error;
       }
     }
   } catch (error) {
     console.error('Outbox delivery failed; will retry:', error);
   } finally {
-    if (connection) connection.release();
-    processingOutbox = false;
+    try {
+      if (connection) connection.release();
+    } catch (error) {
+      console.error('Outbox connection release failed:', error);
+    } finally {
+      processingOutbox = false;
+    }
   }
 }
 
 app.get('/api/items', async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT * FROM items ORDER BY created_at DESC');
+    const [rows] = await pool.query(
+      'SELECT id, title, description, created_at FROM items ORDER BY created_at DESC'
+    );
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -134,7 +148,11 @@ app.get('/api/items', async (req, res) => {
 });
 
 app.post('/api/items', async (req, res) => {
-  const { title, description } = req.body;
+  const { title: rawTitle, description = null } = req.body || {};
+  if (typeof rawTitle !== 'string' || !rawTitle.trim()) {
+    return res.status(400).json({ error: 'Title must be a non-empty string' });
+  }
+  const title = rawTitle.trim();
   try {
     const newItem = await withOutboxEvent('ITEM_CREATED', async (connection) => {
       const [result] = await connection.query(
@@ -151,8 +169,15 @@ app.post('/api/items', async (req, res) => {
 });
 
 app.put('/api/items/:id', async (req, res) => {
-  const { title, description } = req.body;
+  const { title: rawTitle, description = null } = req.body || {};
   const { id } = req.params;
+  if (!/^\d+$/.test(id) || !Number.isSafeInteger(Number(id)) || Number(id) <= 0) {
+    return res.status(400).json({ error: 'ID must be a positive integer' });
+  }
+  if (typeof rawTitle !== 'string' || !rawTitle.trim()) {
+    return res.status(400).json({ error: 'Title must be a non-empty string' });
+  }
+  const title = rawTitle.trim();
   try {
     const updated = await withOutboxEvent('ITEM_UPDATED', async (connection) => {
       const [result] = await connection.query(
@@ -188,15 +213,55 @@ app.delete('/api/items/:id', async (req, res) => {
 const PORT = process.env.PORT || 5000;
 async function start() {
   await initDB();
+  if (shuttingDown) return;
   await producer.connect();
-  void processOutbox();
-  setInterval(() => void processOutbox(), 1000);
-  app.listen(PORT, () => {
+  if (shuttingDown) return;
+  const runOutbox = () => {
+    if (!processingOutbox) outboxTask = processOutbox();
+  };
+  runOutbox();
+  outboxInterval = setInterval(runOutbox, 1000);
+  server = app.listen(PORT, () => {
     console.log('Express server running on port ' + PORT);
   });
 }
 
-start().catch((err) => {
+async function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  clearInterval(outboxInterval);
+  await startup.catch(() => {});
+  try {
+    if (server) {
+      await new Promise((resolve, reject) => {
+        server.close((err) => err ? reject(err) : resolve());
+      });
+    }
+  } catch (err) {
+    console.error('Server shutdown failed:', err);
+    process.exitCode = 1;
+  }
+  await outboxTask;
+  try {
+    await producer.disconnect();
+  } catch (err) {
+    console.error('Kafka shutdown failed:', err);
+    process.exitCode = 1;
+  }
+  try {
+    await pool.end();
+  } catch (err) {
+    console.error('MySQL shutdown failed:', err);
+    process.exitCode = 1;
+  }
+}
+
+process.on('SIGTERM', () => void shutdown());
+process.on('SIGINT', () => void shutdown());
+
+const startup = start();
+startup.catch((err) => {
   console.error('Server startup failed:', err);
-  process.exit(1);
+  process.exitCode = 1;
+  void shutdown();
 });
