@@ -89,7 +89,7 @@ app.put('/api/items/:id', async (req, res) => {
   try {
     const [result] = await pool.query(
       'UPDATE items SET title = ?, description = ? WHERE id = ?',
-      [title, description]
+      [title, description, id]
     );
     if (result.affectedRows === 0) return res.status(404).send('Not Found');
     const updated = { id: Number(id), title, description };
