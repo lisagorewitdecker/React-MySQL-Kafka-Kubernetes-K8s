@@ -4,6 +4,8 @@ metadata:
   name: kafka
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: kafka
@@ -17,6 +19,33 @@ spec:
           image: bashj79/kafka-kraft:latest
           ports:
             - containerPort: 9092
+          command:
+            - /bin/bash
+            - -c
+          args:
+            - |
+              if [ -f /tmp/kraft-combined-logs/meta.properties ]; then
+                exec /opt/kafka/bin/kafka-server-start.sh /opt/kafka/config/kraft/server.properties
+              fi
+              exec /bin/start_kafka.sh
+          volumeMounts:
+            - name: kafka-data
+              mountPath: /tmp/kraft-combined-logs
+      volumes:
+        - name: kafka-data
+          persistentVolumeClaim:
+            claimName: kafka-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kafka-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
 ---
 apiVersion: v1
 kind: Service
