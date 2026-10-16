@@ -100,7 +100,7 @@ app.put('/api/items/:id', async (req, res) => {
   }
 });
 
-app.get('/api/items/:id', async (req, res) => {
+app.delete('/api/items/:id', async (req, res) => {
   const { title, description } = req.body;
   const { id } = req.params;
   try {
