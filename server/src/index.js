@@ -114,8 +114,15 @@ app.delete('/api/items/:id', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, async () => {
+async function start() {
   await initDB();
   await producer.connect();
-  console.log('Express server running on port ' + PORT);
+  app.listen(PORT, () => {
+    console.log('Express server running on port ' + PORT);
+  });
+}
+
+start().catch((err) => {
+  console.error('Server startup failed:', err);
+  process.exit(1);
 });
